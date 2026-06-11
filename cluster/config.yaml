@@ -1,0 +1,97 @@
+# Snakemake 8 cluster profile for LSF (bsub).
+# WES variant calling (GATK) + cellSNP-lite + Vireo demultiplexing.
+# Edit the LSF project (-P) and queue to match your site, or adapt to another
+# scheduler. LSF scheduler logs go to ./logs/lsf/{rule}/ (relative to the repo
+# root, where you launch snakemake); per-rule tool logs go under output_dir/logs/.
+
+executor: cluster-generic
+
+cluster-generic-submit-cmd: >-
+  mkdir -p logs/lsf/{rule} &&
+  bash cluster/lsf_submit.sh
+  -P acc_YourProject
+  -q {resources.queue}
+  -n {threads}
+  -W {resources.walltime}
+  -R "rusage[mem={resources.mem_mb_per_cpu}]"
+  -R "span[hosts=1]"
+  -J "smk.{rule}.{wildcards}"
+  -oo "logs/lsf/{rule}/%J.o"
+  -eo "logs/lsf/{rule}/%J.e"
+
+# IMPORTANT: cluster-generic APPENDS the external job id to the status command.
+# Do NOT add a literal "{job_id}" here — the plugin does not substitute it.
+cluster-generic-status-cmd: "bash cluster/lsf_status.sh"
+cluster-generic-cancel-cmd: "bkill"
+seconds-between-status-checks: 10
+
+# ── defaults (applied to every rule unless overridden) ──────────────────────
+# NOTE: walltime values are wrapped in "'...'" on purpose. Snakemake evaluates
+# resource values as Python expressions; a bare "06:00" is parsed as an illegal
+# int literal and raises SyntaxError. The inner single quotes make it evaluate
+# to the literal string passed to `bsub -W`.
+default-resources:
+  queue: "'premium'"
+  walltime: "'04:00'"
+  mem_mb_per_cpu: 4000
+
+# ── per-rule overrides (only values that differ from defaults) ───────────────
+set-resources:
+  fastp:
+    mem_mb_per_cpu: 2000
+    walltime: "'02:00'"
+  bwa_mem2:
+    walltime: "'12:00'"
+  mark_duplicates:
+    mem_mb_per_cpu: 8000
+    walltime: "'06:00'"
+  base_recalibrator:
+    walltime: "'12:00'"
+  apply_bqsr:
+    walltime: "'12:00'"
+  haplotype_caller:
+    mem_mb_per_cpu: 8000
+    walltime: "'36:00'"
+  combine_gvcfs:
+    mem_mb_per_cpu: 8000
+    walltime: "'08:00'"
+  genotype_gvcfs:
+    mem_mb_per_cpu: 8000
+    walltime: "'08:00'"
+  select_snps:
+    walltime: "'02:00'"
+  select_indels:
+    walltime: "'02:00'"
+  filter_snps:
+    walltime: "'02:00'"
+  filter_indels:
+    walltime: "'02:00'"
+  merge_filtered_vcfs:
+    walltime: "'02:00'"
+  select_pass:
+    walltime: "'02:00'"
+  cellsnp_lite:
+    walltime: "'06:00'"
+  subset_pool_donor_vcf:
+    walltime: "'01:00'"
+  vireo:
+    walltime: "'04:00'"
+  demux_summary:
+    walltime: "'00:30'"
+  combine_cell_labels:
+    walltime: "'00:30'"
+  unassigned_decompose:
+    walltime: "'00:30'"
+
+# ── general settings ────────────────────────────────────────────────────────
+jobs: 20
+# Some bundled mamba builds are too old for Snakemake's --no-default-packages;
+# `conda env create` avoids that flag.
+conda-frontend: conda
+software-deployment-method:
+  - conda
+rerun-incomplete: true
+keep-going: true
+printshellcmds: true
+latency-wait: 120   # GPFS metadata can lag between compute and driver nodes
+retries: 1

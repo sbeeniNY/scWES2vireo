@@ -1,0 +1,138 @@
+# =============================================================================
+# Snakemake config: WES -> GATK joint genotyping -> cellSNP-lite + Vireo demux
+# All paths and parameters are managed here. Do NOT hardcode in rule files.
+#
+# This is a TEMPLATE. Replace every /path/to/... placeholder with a real path
+# on your system, and edit the donor / pool definitions to match your study.
+# Donor IDs must be identical across `wes_samples`, `pools.*.donors`, and
+# `sample_labels`.
+# =============================================================================
+
+# ============================================================
+# 1. Reference genome & GATK resource bundle (GRCh38)
+# ============================================================
+reference:
+  # FASTA must be BWA-MEM2 indexed and have a .fai (samtools faidx) and .dict
+  # (gatk CreateSequenceDictionary). Use the SAME FASTA/chromosome naming for
+  # WES and scRNA-seq — for Cell Ranger BAMs, the FASTA in the matching Cell
+  # Ranger reference directory.
+  #   conda activate alignment   # (or: bwa-mem2 + samtools)
+  #   bwa-mem2 index   /path/to/reference/genome.fa
+  #   samtools faidx   /path/to/reference/genome.fa
+  #   gatk CreateSequenceDictionary -R /path/to/reference/genome.fa
+  genome: "/path/to/reference/refdata-gex-GRCh38-2024-A/fasta/genome.fa"
+
+  # GATK BQSR known-sites (GRCh38). Download from the Broad public bucket and
+  # index each with `gatk IndexFeatureFile -I <file>`:
+  #   https://console.cloud.google.com/storage/browser/gcp-public-data--broad-references/hg38/v0
+  #   wget https://storage.googleapis.com/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf
+  #   wget https://storage.googleapis.com/gcp-public-data--broad-references/hg38/v0/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz
+  #   wget https://storage.googleapis.com/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.known_indels.vcf.gz
+  known_sites:
+    dbsnp:        "/path/to/reference/Homo_sapiens_assembly38.dbsnp138.vcf"
+    mills:        "/path/to/reference/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz"
+    g1000_indels: "/path/to/reference/Homo_sapiens_assembly38.known_indels.vcf.gz"
+
+  # OPTIONAL capture-kit BED. Leave as "" to run BQSR / HaplotypeCaller without
+  # interval restriction (whole-genome iteration; ~2-4x slower for WES). If you
+  # have a targets BED, set its absolute path and the rules pass `-L {bed}`.
+  exome_targets_bed: ""
+
+  # cellSNP-lite common-SNP panel (1000G, MAF > 5%, hg38). MUST use the SAME
+  # chromosome naming as `genome` above. If your FASTA is chr-prefixed but the
+  # panel is not, rename the panel first:
+  #   wget -O genome1K.phase3.SNP_AF5e2.chr1toX.hg38.vcf.gz \
+  #     "https://sourceforge.net/projects/cellsnp/files/SNPlist/genome1K.phase3.SNP_AF5e2.chr1toX.hg38.vcf.gz/download"
+  #   for i in $(seq 1 22) X; do echo "$i chr$i"; done > chr_name_map.txt
+  #   bcftools annotate --rename-chrs chr_name_map.txt genome1K.phase3.SNP_AF5e2.chr1toX.hg38.vcf.gz \
+  #     | bcftools sort -Oz -o genome1K.phase3.SNP_AF5e2.chr1toX.hg38.chrPrefix.vcf.gz
+  #   tabix -p vcf genome1K.phase3.SNP_AF5e2.chr1toX.hg38.chrPrefix.vcf.gz
+  common_snps_vcf: "/path/to/reference/genome1K.phase3.SNP_AF5e2.chr1toX.hg38.chrPrefix.vcf.gz"
+
+# ============================================================
+# 2. WES samples (per-donor FASTQ)
+# ============================================================
+# Donor IDs here MUST match pools.*.donors and sample_labels below.
+wes_samples:
+  DonorA:
+    R1: "/path/to/wes_fastqs/DonorA_R1_001.fastq.gz"
+    R2: "/path/to/wes_fastqs/DonorA_R2_001.fastq.gz"
+  DonorB:
+    R1: "/path/to/wes_fastqs/DonorB_R1_001.fastq.gz"
+    R2: "/path/to/wes_fastqs/DonorB_R2_001.fastq.gz"
+  DonorC:
+    R1: "/path/to/wes_fastqs/DonorC_R1_001.fastq.gz"
+    R2: "/path/to/wes_fastqs/DonorC_R2_001.fastq.gz"
+
+# ============================================================
+# 3. scRNA-seq pools (Cell Ranger output + pool -> donor mapping)
+# ============================================================
+# cellranger_dir points to the Cell Ranger `outs/` directory. The pipeline reads
+# the per-sample BAM and the filtered barcode list from inside it. n_donor is
+# the number of genotypes Vireo expects in the pool (= len(donors)).
+pools:
+  Pool1:
+    cellranger_dir: "/path/to/cellranger/Pool1/outs"
+    donors: ["DonorA", "DonorB"]
+    n_donor: 2
+  Pool2:
+    cellranger_dir: "/path/to/cellranger/Pool2/outs"
+    donors: ["DonorB", "DonorC"]
+    n_donor: 2
+
+# ============================================================
+# 4. Donor-to-label mapping (pool donor -> final sample label)  [optional]
+# ============================================================
+# Maps each donor in a pool to a final human-readable label (e.g. timepoint).
+# Used to fill the `mapped_label` / `sample` columns in the summary and the
+# per-cell table. Leave a pool out or use {} if you do not need custom labels.
+sample_labels:
+  Pool1:
+    DonorA: "DonorA_Day0"
+    DonorB: "DonorB_Day7"
+  Pool2:
+    DonorB: "DonorB_Day0"
+    DonorC: "DonorC_Day28"
+
+# ============================================================
+# 5. Tool parameters
+# ============================================================
+params:
+  fastp:
+    extra: "--qualified_quality_phred 20 --length_required 50"
+  bwa:
+    threads: 16
+    extra: ""
+  gatk:
+    java_options: "-Xmx16g"
+    haplotypecaller_extra: ""
+  cellsnp:
+    # Recovery-oriented defaults for sparse 10x 3' data (see README
+    # "Unassigned recovery"). min_count is the AGGREGATE read/UMI count per SNP
+    # across all cells (not per cell). Because Vireo gets known donor genotypes,
+    # allele-frequency-in-data filtering is unnecessary, so min_MAF is relaxed.
+    min_MAF: 0.0          # conservative alternative: 0.05
+    min_count: 2          # conservative alternative: 20
+    threads: 8
+    extra: "--UMItag Auto"
+  vireo:
+    extra: ""
+
+  # ----------------------------------------------------------------
+  # Unassigned-cell decomposition (scripts/16_unassigned_decompose.py)
+  # Classifies Vireo "unassigned" cells into:
+  #   data_limited   : n_vars < min_vars              (genuinely unassignable)
+  #   recoverable    : n_vars >= min_vars AND prob_max >= recover_prob
+  #                    (confident best singlet just under Vireo's 0.9 cutoff)
+  #   true_ambiguous : n_vars >= min_vars AND prob_max < recover_prob
+  #                    (enough data but signal genuinely split -> doublet/ambient)
+  # ----------------------------------------------------------------
+  qc:
+    assign_thr: 0.9       # Vireo's internal assignment posterior cutoff (reference)
+    min_vars: 10          # min informative SNPs for a cell to be assignable
+    recover_prob: 0.7     # best-singlet posterior above which unassigned -> "recoverable"
+
+# ============================================================
+# 6. Output directory
+# ============================================================
+output_dir: "/path/to/output/demux_result"

@@ -1,0 +1,9 @@
+name: cellsnp
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.10
+  - cellsnp-lite=1.2.3
+  - pyyaml
+  - pandas

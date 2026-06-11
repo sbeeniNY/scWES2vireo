@@ -1,0 +1,50 @@
+"""
+Snakemake pipeline:
+  Part 1: WES FASTQ -> sample BAM -> joint multi-sample VCF (cohort.pass.vcf.gz)
+  Part 2: cellSNP-lite + Vireo per pool for genetic demultiplexing of scRNA-seq
+
+All paths/parameters are managed in config/config.yaml.
+"""
+
+import os
+
+configfile: "config/config.yaml"
+
+
+# -----------------------------------------------------------------------------
+# Convenience handles
+# -----------------------------------------------------------------------------
+OUTDIR = config["output_dir"]
+WES_SAMPLES = list(config["wes_samples"].keys())
+POOLS = list(config["pools"].keys())
+
+
+# -----------------------------------------------------------------------------
+# Rule includes
+# -----------------------------------------------------------------------------
+include: "rules/qc.smk"
+include: "rules/alignment.smk"
+include: "rules/preprocessing.smk"
+include: "rules/variant_calling.smk"
+include: "rules/demux.smk"
+
+
+# -----------------------------------------------------------------------------
+# Top-level target
+# -----------------------------------------------------------------------------
+rule all:
+    input:
+        # WES joint cohort VCFs
+        os.path.join(OUTDIR, "wes/joint/cohort.filtered.vcf.gz"),
+        os.path.join(OUTDIR, "wes/joint/cohort.pass.vcf.gz"),
+        # Vireo donor assignments per pool
+        expand(
+            os.path.join(OUTDIR, "demux/{pool}/vireo/donor_ids.tsv"),
+            pool=POOLS,
+        ),
+        # Cross-pool summary
+        os.path.join(OUTDIR, "demux/demux_summary.tsv"),
+        # Cohort per-cell table (pool, cell, donor, sample) for Seurat
+        os.path.join(OUTDIR, "demux/cell_donor_sample.tsv"),
+        # Unassigned-cell decomposition (recoverable vs genuinely ambiguous)
+        os.path.join(OUTDIR, "demux/qc_unassigned/unassigned_decomposition_per_pool.tsv"),

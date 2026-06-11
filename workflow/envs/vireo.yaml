@@ -1,0 +1,10 @@
+name: vireo
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.10
+  - vireosnp=0.5.8
+  - numpy
+  - scipy
+  - pandas

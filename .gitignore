@@ -1,0 +1,12 @@
+# Snakemake
+.snakemake/
+
+# Run logs (LSF scheduler logs + per-rule logs)
+logs/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
